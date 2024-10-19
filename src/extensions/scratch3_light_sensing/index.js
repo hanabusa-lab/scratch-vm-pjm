@@ -415,8 +415,6 @@ class Scratch3LightSensingBlocks {
                 approx.delete();
             }
         }
-        contours.delete();
-        hierarchy.delete();
        
         //結果画面表示
         if(this.globalAnalyzeImageShowFg==1){
@@ -438,6 +436,9 @@ class Scratch3LightSensingBlocks {
             });
         }
         
+        contours.delete();
+        hierarchy.delete();
+        gray.delete();
         src.delete();
         dst.delete();
     }
