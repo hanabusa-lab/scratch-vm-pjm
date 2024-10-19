@@ -1,12 +1,10 @@
 const Runtime = require('../../engine/runtime');
-
 const ArgumentType = require('../../extension-support/argument-type');
 const BlockType = require('../../extension-support/block-type');
 const Clone = require('../../util/clone');
 const Cast = require('../../util/cast');
 const formatMessage = require('format-message');
 const Video = require('../../io/video');
-
 const log = require('../../util/log');
 const cv = require('./opencv.js');
 const StageLayering = require('../../engine/stage-layering');
@@ -14,7 +12,20 @@ const StageLayering = require('../../engine/stage-layering');
 //定数
 const DEFAULT_BRIGHT_LEBEL = 240; //2値化の敷居値
 const DEFAULT_DETECT_SIZE = 100; //検出サイズ
+const LOG_OUT = 0; //ログ出力切り替え
 
+// カラー番号に対応するRGB値を定義
+const COLOR_LIST = [
+    new cv.Scalar(255, 0, 0, 255),  // 1: 青
+    new cv.Scalar(0, 255, 0, 255),  // 2: 緑
+    new cv.Scalar(0, 0, 255, 255),  // 3: 赤
+    new cv.Scalar(255, 255, 0, 255), // 4: シアン
+    new cv.Scalar(255, 0, 255, 255), // 5: マゼンタ
+    new cv.Scalar(0, 255, 255, 255), // 6: イエロー
+    new cv.Scalar(128, 128, 128, 255), // 8: グレー
+    new cv.Scalar(128, 0, 128, 255),   // 9: パープル
+    new cv.Scalar(128, 128, 0, 255)    
+]
 
 /**
  * Icon svg to be displayed in the blocks category menu, encoded as a data URI.
@@ -42,35 +53,45 @@ const Message = {
         'en': 'off',
       },
     getX: {
-        'ja': '[OBJECT_NUMBER] 人目のx座標',
-        'ja-Hira': '[OBJECT_NUMBER] にんめのxざひょう',
-        'en': 'x of object no. [OBJECT_NUMBER]'
+        'ja': '[OBJECT_NUMBER] 個目のx座標',
+        'ja-Hira': '[OBJECT_NUMBER] こめのxざひょう',
+        'en': 'x of light no. [OBJECT_NUMBER]'
       },
     getY: {
-        'ja': '[OBJECT_NUMBER] 人目のy座標',
-        'ja-Hira': '[OBJECT_NUMBER] にんめのyざひょう',
-        'en': 'y of object no. [OBJECT_NUMBER]'
+        'ja': '[OBJECT_NUMBER] 個目のy座標',
+        'ja-Hira': '[OBJECT_NUMBER] こめのyざひょう',
+        'en': 'y of light no. [OBJECT_NUMBER]'
       },
     objectCount: {
-        'ja': 'オブジェクト数',
-        'ja-Hira': 'オブジェクトすう',
-        'en': 'object count'
+        'ja': 'ライトの数',
+        'ja-Hira': 'ライトのかず',
+        'en': 'light count'
     },
     analyzeImageShowToggle: {
-        'ja': '解析表示を [ANALYZE_IMAGE_SHOW_STATE] にする',
-        'ja-Hira': 'かいせきひょうじを [ANALYZE_IMAGE_SHOW_STATE] にする',
+        'ja': 'カイセキ表示を [ANALYZE_IMAGE_SHOW_STATE] にする',
+        'ja-Hira': 'カイセキひょうじを [ANALYZE_IMAGE_SHOW_STATE] にする',
         'en': 'analyze image show [ANALYZE_IMAGE_SHOW_STATE]'
     },
     brightLevel: {
-        'ja': '光検出レベルを [BRIGHT_LEBEL] にする',
-        'ja-Hira': 'ひかりを見つけるレベルを [BRIGHT_LEBEL] にする',
+        'ja': 'ライトの明るさを [BRIGHT_LEBEL] にする',
+        'ja-Hira': 'ライトのあかるさを [BRIGHT_LEBEL] にする',
         'en': 'Set Bright Level [BRIGHT_LEBEL]'
     },
     detectSize: {
-        'ja': '模様検出の大きさを [DETECT_SIZE] にする',
-        'ja-Hira': 'もようけんしゅつの大きさを [DETECT_SIZE] にする',
+        'ja': '[DETECT_SIZE] より大きなライトを見つける',
+        'ja-Hira': '[DETECT_SIZE] よりおおきなライトをみつける',
         'en': 'Set Pattern Detect Size [DETECT_SIZE]'
-    }
+    },
+    setVideoTransparency: {
+        'ja': 'ビデオの透明度を [TRANSPARENCY] にする',
+        'ja-Hira': 'ビデオのとうめいどを [TRANSPARENCY] にする',
+        'en': 'set video transparency to [TRANSPARENCY]'
+    },
+    videoToggle: {
+        'ja': 'ビデオを [VIDEO_STATE] にする',
+        'ja-Hira': 'ビデオを [VIDEO_STATE] にする',
+        'en': 'turn video [VIDEO_STATE]'
+    },
 }  
 
 const AvailableLocales = ['en', 'ja', 'ja-Hira'];
@@ -93,12 +114,8 @@ const VideoState = {
 
 const AnayzeImageShowState = {
     OFF: 'off',
-
     ON: 'on'
 };
-
-
-
 
 //検出オブジェクト定義
 class DetectObject {
@@ -211,7 +228,7 @@ class Scratch3LightSensingBlocks {
     }
 
     constructor (runtime) {
-        //らんタイム設定
+        //ランタイム設定
         this.runtime = runtime;
         //オブジェクトの初期化
         this.objects = [];
@@ -219,8 +236,12 @@ class Scratch3LightSensingBlocks {
         this.locale = this.setLocale();
         //二値化の明るさレベル
         this.globalBrightLevel = DEFAULT_BRIGHT_LEBEL;
-        //模様検出のさいず
+        //模様検出のサイズ
         this.globalDetectSize = DEFAULT_DETECT_SIZE;
+        //解析画像の表示の切り替えフラグ
+        this.globalAnalyzeImageShowFg = 0;
+        //ビットマップ画像のskinのid
+        this.skinId =0; 
     
         if (runtime.formatMessage) {
             // Replace 'formatMessage' to a formatter which is used in the runtime.
@@ -235,7 +256,10 @@ class Scratch3LightSensingBlocks {
 
             // Clear target motion state values when the project starts.
             this.runtime.on(Runtime.PROJECT_RUN_START, this.reset.bind(this));
-
+            
+            //this.drawableIDをここで作ってみる。
+            this.drawableID = this.runtime.renderer.createDrawable("video");
+          
             // Kick off looping the analysis logic.
             this._loop();
         }
@@ -340,19 +364,14 @@ class Scratch3LightSensingBlocks {
             return;
         }
     
-        //log.log( "frame=",frame);
         //フレーム取得
         let src = cv.matFromImageData(frame);
-        //let src2 = new cv.Mat();
-        //let dsize = new cv.Size(src.cols / 2, src.rows / 2);
-        //cv.resize(src, src2, dsize, 0, 0, cv.INTER_LINEAR);
         let gray = new cv.Mat();
         //グレー変換
         cv.cvtColor(src,gray,cv.COLOR_RGB2GRAY);
         //バイナリ変換
         let dst = new cv.Mat();
         cv.threshold(gray, dst, this.globalBrightLevel, 255, cv.THRESH_BINARY);
-
         //輪郭抽出
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
@@ -367,41 +386,28 @@ class Scratch3LightSensingBlocks {
             // ある程度のサイズ以上の輪郭のみ処理
             const area = cv.contourArea(contours.get(i), false);
             //console.log("i=",i, " area=",area);
-            //サイズが500以上は表示しない。
+            //サイズが大きいもののみを対応する. 
             if (area > this.globalDetectSize) {
-                console.log("i=",i, " area=",area);
+                if(LOG_OUT){
+                    console.log("i=",i, " area=",area);
+                }
                 // cv.Matは行列で、幅1, 高さ4のものが4頂点に近似できた範囲になる
                 let approx = new cv.Mat();
-                //let poly = new cv.MatVector();
                 cv.approxPolyDP(contours.get(i), approx, 0.02 * cv.arcLength(contours.get(i), true), true);
-                //cv.drawContours(dst, [approx], 1, new cv.Scalar(255, 0, 0, 255), 2);
-                //cv.drawContours(dst, contours, i, new cv.Scalar(0, 255, 0, 255), 2, cv.LINE_8, hierarchy, 100);
-                //console.log("contors=",contours);
-                //console.log("approx=",approx);
-
-                //console.log("approx dataf=",approx.data32F);
-                //console.log("approx datas=",approx.data32S);
                 
-                //approx.convertTo(approx, cv.CV_32FC2);
-                //console.log("approx size=",approx.size);
-                //console.log("approx rows=",approx.rows);
-                //console.log("approx columns=",approx.cols);
                 for (let i = 0; i < approx.rows; i++) {
                     let point = approx.data32S[i * 2] + ', ' + approx.data32S[i * 2 + 1];
-                    console.log('Point ' + i + ': ' + point);
-                    cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]), 10, new cv.Scalar(0, 0, 255, 255), -1);
+                    if(LOG_OUT){
+                        console.log('Point ' + i + ': ' + point);
+                    }
+                    //cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]), 10, new cv.Scalar(0, 0, 255, 255), -1);
+                    cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]),3, COLOR_LIST[this.objects.length%9], -1);
+              
                 }
                 
-                       
-                //object listへの追加
-                //let color = new cv.Scalar(0, 255, 0); // 緑色
-                //cv.drawContours(dst, new cv.MatVector(approx), -1, color, 2, cv.LINE_8, hierarchy, 0);
-
                 let moments = cv.moments(contours.get(i), false);
                 let cx = parseInt(moments.m10 / moments.m00);
                 let cy = parseInt(moments.m01 / moments.m00);
-                //console.log(`Contour ${i}: Centroid = (${cx}, ${cy})`);
-                //let object = new DetectObject(cx-frame.width/2, frame.height/2-cy, area, approx.size().height, 0);
                 let object = new DetectObject(cx-frame.width/2, frame.height/2-cy, area, 0, 0);
                 
                 //object.print();
@@ -412,14 +418,26 @@ class Scratch3LightSensingBlocks {
         contours.delete();
         hierarchy.delete();
        
-        //デバック用 結果の画面表示
-        const imageData = new ImageData(new Uint8ClampedArray(dst.data, dst.cols, dst.rows), frame.width, frame.height);
-        const skinId = this.runtime.renderer.createBitmapSkin(imageData,1);
-        this.drawableID = this.runtime.renderer.createDrawable("video");
-        this.runtime.renderer.updateDrawableProperties( this.drawableID, {
-                    skinId: skinId,  visible: true
-        });
+        //結果画面表示
+        if(this.globalAnalyzeImageShowFg==1){
+            const imageData = new ImageData(new Uint8ClampedArray(dst.data, dst.cols, dst.rows), frame.width, frame.height);
+            //bitmapskinのupdateはないため、一度、skinを削除する。
+            if(this.skinId!=0){
+                this.runtime.renderer.destroySkin(this.skinId);
+            }
+            this.skinId = this.runtime.renderer.createBitmapSkin(imageData,1);
+            this.runtime.renderer.updateDrawableProperties( this.drawableID, {
+                        skinId: this.skinId,  visible: true });
+            //うまく、解析画像の透過色を調整できず。
+            //this.runtime.renderer.updateDrawableProperties( this.drawableID, {
+            //    effects: {ghost: this.globalVideoTransparency}});
     
+        }else{
+            this.runtime.renderer.updateDrawableProperties( this.drawableID, {
+                visible: false
+            });
+        }
+        
         src.delete();
         dst.delete();
     }
@@ -471,6 +489,7 @@ class Scratch3LightSensingBlocks {
             return obj;
         });
     }
+
     /**
      * States the video sensing activity can be set to.
      * @readonly
@@ -497,16 +516,15 @@ class Scratch3LightSensingBlocks {
 
         // Return extension definition
         return {
-            id: 'videoSensing',
+            id: 'lightSensing',
             name: formatMessage({
-                id: 'videoSensing.categoryName',
-                default: 'Video Sensing',
-                description: 'Label for the video sensing extension category'
+                id: 'lightSensing.categoryName',
+                default: 'ライトセンサー',
+                description: 'カメラでライトを見つける'
             }),
             blockIconURI: blockIconURI,
             menuIconURI: menuIconURI,
             blocks: [
-                
                 {
                     opcode: 'getX',
                     blockType: BlockType.REPORTER,
@@ -545,19 +563,6 @@ class Scratch3LightSensingBlocks {
                             defaultValue: 0
                         }
                     }
-                },{
-                    opcode: 'setVideoTransparency',
-                    text: formatMessage({
-                        id: 'videoSensing.setVideoTransparency',
-                        default: 'set video transparency to [TRANSPARENCY]',
-                        description: 'Controls transparency of the video preview layer'
-                    }),
-                    arguments: {
-                        TRANSPARENCY: {
-                            type: ArgumentType.NUMBER,
-                            defaultValue: 50
-                        }
-                    }
                 },
                 {
                     opcode: 'setBrightLevel',
@@ -569,7 +574,7 @@ class Scratch3LightSensingBlocks {
                         }
                     }
                 },
-{
+                {
                     opcode: 'setDetectSize',
                     text: Message.detectSize[this.locale],
                     arguments: {
@@ -580,12 +585,30 @@ class Scratch3LightSensingBlocks {
                     }
                 },
                 {
+                    opcode: 'videoToggle',
+                    text: Message.videoToggle[this.locale],
+                    //text: formatMessage({
+                    //    id: 'videoSensing.videoToggle',
+                    //    default: 'turn video [VIDEO_STATE]',
+                    //    description: 'Controls display of the video preview layer'
+                    //}),
+                    arguments: {
+                        VIDEO_STATE: {
+                            type: ArgumentType.NUMBER,
+                            menu: 'VIDEO_STATE',
+                            defaultValue: VideoState.ON
+                        }
+                    }
+                },
+
+                {
                     opcode: 'setVideoTransparency',
-                    text: formatMessage({
-                        id: 'videoSensing.setVideoTransparency',
-                        default: 'set video transparency to [TRANSPARENCY]',
-                        description: 'Controls transparency of the video preview layer'
-                    }),
+                    text: Message.setVideoTransparency[this.locale],
+                    //text: formatMessage({
+                    //    id: 'videoSensing.setVideoTransparency',
+                    //    default: 'set video transparency to [TRANSPARENCY]',
+                    //    description: 'Controls transparency of the video preview layer'
+                    //}),
                     arguments: {
                         TRANSPARENCY: {
                             type: ArgumentType.NUMBER,
@@ -639,7 +662,7 @@ class Scratch3LightSensingBlocks {
         return "";
     }
 
-    //検出したもののX位置
+    //検出したもののY位置
     getY (args) { 
         if (this.objects[parseInt(args.OBJECT_NUMBER, 10) - 1]){
             return this.objects[parseInt(args.OBJECT_NUMBER, 10) - 1].y;
@@ -649,12 +672,24 @@ class Scratch3LightSensingBlocks {
         return "";
     }
 
-  setBrightLevel (args) {
+    //画像解析状況の表示切り替え関数
+    analyzeImageShowToggle(args){
+        if(args.ANALYZE_IMAGE_SHOW_STATE==1){
+            this.globalAnalyzeImageShowFg = 1;
+        }else{
+            this.globalAnalyzeImageShowFg = 0;
+        }
+        console.log("this.globalAnalyzeImageShowFg=", this.globalAnalyzeImageShowFg);
+         
+
+    }
+
+    setBrightLevel (args) {
         const brightLevel = Cast.toNumber(args.BRIGHT_LEBEL);
         this.globalBrightLevel  = brightLevel;
     }
 
-  setDetectSize (args) {
+    setDetectSize (args) {
         const detectSize = Cast.toNumber(args.DETECT_SIZE);
         this.globalDetectSize  = detectSize;
     }
@@ -685,7 +720,6 @@ class Scratch3LightSensingBlocks {
         return state.motionDirection;*/
 
     }
-
 
     /**
      * A scratch command block handle that configures the video state from
