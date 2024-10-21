@@ -92,6 +92,11 @@ const Message = {
         'ja-Hira': 'ビデオを [VIDEO_STATE] にする',
         'en': 'turn video [VIDEO_STATE]'
     },
+    setPerspective: {
+        'ja': 'カメラ画像の傾きを [TOP_OFFSET_X] [TOP_OFFSET_Y] [BOTTOM_OFFSET_X] [BOTTOM_OFFSET_Y] にする',
+        'ja-Hira': 'カメラがぞうのかたむきを [TOP_OFFSET_X] [TOP_OFFSET_Y] [BOTTOM_OFFSET_X] [BOTTOM_OFFSET_Y] にする',
+        'en': 'set camera perspective [TOP_OFFSET_X] [TOP_OFFSET_Y] [BOTTOM_OFFSET_X] [BOTTOM_OFFSET_Y] '
+    },
 }  
 
 const AvailableLocales = ['en', 'ja', 'ja-Hira'];
@@ -242,6 +247,8 @@ class Scratch3LightSensingBlocks {
         this.globalAnalyzeImageShowFg = 0;
         //ビットマップ画像のskinのid
         this.skinId =0; 
+        //カメラ傾きオフセット
+        this.perspective=[0,0,0,0];
     
         if (runtime.formatMessage) {
             // Replace 'formatMessage' to a formatter which is used in the runtime.
@@ -271,7 +278,8 @@ class Scratch3LightSensingBlocks {
      * @type {number}
      */
     static get INTERVAL () {
-        return 33;
+        //return 33;
+        return 100;
     }
 
     /**
@@ -372,14 +380,25 @@ class Scratch3LightSensingBlocks {
         //バイナリ変換
         let dst = new cv.Mat();
         cv.threshold(gray, dst, this.globalBrightLevel, 255, cv.THRESH_BINARY);
+        //dstに対して位置合わせ調整を行う
+        //let srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [50, 50, src.width-50, 50, 50, src.height-50, src.width, src.height]);
+       
+        let srcPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [this.perspective[0], this.perspective[1], src.cols-this.perspective[0], this.perspective[1], this.perspective[2], src.rows-this.perspective[3], src.cols-this.perspective[2], src.rows-this.perspective[3]]);
+        let dstPoints = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, src.cols, 0, 0, src.rows, src.cols, src.rows]);
+        console.log(src.cols, " ", src.rows," ", dst.cols, " ",dst.rows);
+        let transformMatrix = cv.getPerspectiveTransform(srcPoints, dstPoints);
+        let dstm = new cv.Mat();
+        let dsize = new cv.Size(src.cols, src.rows);
+        cv.warpPerspective(dst, dstm, transformMatrix, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+        
         //輪郭抽出
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
         // 輪郭を全部見つけ出す
-        cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_L1);
+        cv.findContours(dstm, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_L1);
         //console.log("contours=", contours.size());
         //デバック用 dstに結果を描画するためRGBに戻す。
-        cv.cvtColor(dst, dst, cv.COLOR_GRAY2RGBA)
+        cv.cvtColor(dstm, dstm, cv.COLOR_GRAY2RGBA)
         //リストを削除
         this.objects.length = 0;
         for (let i = 0; i < contours.size(); i++) {
@@ -401,7 +420,7 @@ class Scratch3LightSensingBlocks {
                         console.log('Point ' + i + ': ' + point);
                     }
                     //cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]), 10, new cv.Scalar(0, 0, 255, 255), -1);
-                    cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]),3, COLOR_LIST[this.objects.length%9], -1);
+                    cv.circle(dstm, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]),3, COLOR_LIST[this.objects.length%9], -1);
               
                 }
                 
@@ -418,7 +437,7 @@ class Scratch3LightSensingBlocks {
        
         //結果画面表示
         if(this.globalAnalyzeImageShowFg==1){
-            const imageData = new ImageData(new Uint8ClampedArray(dst.data, dst.cols, dst.rows), frame.width, frame.height);
+            const imageData = new ImageData(new Uint8ClampedArray(dstm.data, dstm.cols, dstm.rows), frame.width, frame.height);
             //bitmapskinのupdateはないため、一度、skinを削除する。
             if(this.skinId!=0){
                 this.runtime.renderer.destroySkin(this.skinId);
@@ -441,6 +460,7 @@ class Scratch3LightSensingBlocks {
         gray.delete();
         src.delete();
         dst.delete();
+        dstm.delete();
     }
 
     /**
@@ -616,7 +636,29 @@ class Scratch3LightSensingBlocks {
                             defaultValue: 50
                         }
                     }
-                }
+                },
+                {
+                    opcode: 'setPerspective',
+                    text: Message.setPerspective[this.locale],
+                    arguments: {
+                        TOP_OFFSET_X: {
+                            type: ArgumentType.NUMBER,
+                            defaultValue: 0
+                        },
+                        TOP_OFFSET_Y: {
+                            type: ArgumentType.NUMBER,
+                            defaultValue: 0
+                        },
+                        BOTTOM_OFFSET_X: {
+                            type: ArgumentType.NUMBER,
+                            defaultValue: 0
+                        },
+                        BOTTOM_OFFSET_Y: {
+                            type: ArgumentType.NUMBER,
+                            defaultValue: 0
+                        },
+                    }
+                },
             ],
             menus: {
                 
@@ -751,6 +793,13 @@ class Scratch3LightSensingBlocks {
         const transparency = Cast.toNumber(args.TRANSPARENCY);
         this.globalVideoTransparency = transparency;
         this.runtime.ioDevices.video.setPreviewGhost(transparency);
+    }
+
+    setPerspective (args) {
+        this.perspective[0]= Cast.toNumber(args.TOP_OFFSET_X);
+        this.perspective[1] = Cast.toNumber(args.TOP_OFFSET_Y);
+        this.perspective[2] = Cast.toNumber(args.BOTTOM_OFFSET_X);
+        this.perspective[3] = Cast.toNumber(args.BOTTOM_OFFSET_Y);
     }
 
     setLocale() {
