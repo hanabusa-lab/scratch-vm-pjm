@@ -130,6 +130,8 @@ class DetectObject {
       this.area = area;
       this.edgenum = edgenum;
       this.color = color;
+      this.id = 9999;
+      this.takeoverFg = false; //idを引き継いでいるかのチェック用
     }
     print(){
         log.log(`x:${this.x} y:${this.y} area:${this.area} edgenum:${this.edgenum} color=${this.color}`);
@@ -237,6 +239,8 @@ class Scratch3LightSensingBlocks {
         this.runtime = runtime;
         //オブジェクトの初期化
         this.objects = [];
+        //オブジェクトの前設定
+        this.preobjects = [];
         //ロケール設定
         this.locale = this.setLocale();
         //二値化の明るさレベル
@@ -421,20 +425,83 @@ class Scratch3LightSensingBlocks {
                     }
                     //cv.circle(dst, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]), 10, new cv.Scalar(0, 0, 255, 255), -1);
                     cv.circle(dstm, new cv.Point(approx.data32S[i * 2], approx.data32S[i * 2 + 1]),3, COLOR_LIST[this.objects.length%9], -1);
-              
                 }
                 
                 let moments = cv.moments(contours.get(i), false);
                 let cx = parseInt(moments.m10 / moments.m00);
                 let cy = parseInt(moments.m01 / moments.m00);
                 let object = new DetectObject(cx-frame.width/2, frame.height/2-cy, area, 0, 0);
+                object.id = this.objects.length+1;
                 
                 //object.print();
                 this.objects.push(object);
                 approx.delete();
             }
         }
+        //前のobjecのidを、今のobjectに引き継ぐ。
+        //preobjectにおいて、現状のobjectで一番近いものに、idを受け渡す。
+        var index = 0;
+        for(var i =0; i<this.preobjects.length; i++){    
+            var minindex = -1;
+            var mindist = 9999999;
+            var dist = 0;
+            var pobject = null;
+            var object = null;
+            //console.log("preobject len=", this.preobjects.length)
+            for (var j =0; j<this.objects.length; j++){
+                //console.log("cur=", index, "pre=", i)
+                pobject = this.preobjects[i];
+                object = this.objects[j]
+                //console.log("object",object.x ,object.y, "pobject", pobject.x, pobject.y)
+                dist = Math.sqrt((object.x-pobject.x) * (object.x-pobject.x) + (object.y-pobject.y) * (object.y-pobject.y)); 
+                //console.log("mindist calc", mindist, dist);
+                   
+                if(dist < mindist){
+                    mindist = dist;
+                    minindex = j;
+                    //console.log("update minindex", minindex, mindist);
+                }
+            }
+            if(minindex>=0){
+                //console.log("change id", object.id, this.preobjects[minindex].id)
+                this.objects[minindex].id = this.preobjects[i].id;
+                this.objects[minindex].takeoverFg = true;      
+            }
+            index++;
+        }
+        //引き継いだものと、引き継がなかったもので、idをソートしなおす。
+        //引き継いだものが番号が若く、引き継がなかったもの(新しいもの)が後に来るようにする。
+        for(var i =0; i<this.objects.length; i++){
+            if(!this.objects[i].takeoverFg){
+                this.objects[i].id +=10;
+            }
+        }
+        //indexでobjectをソートする。
+        this.objects.sort((a, b) => a.id - b.id);
+        //idを振り直す。
+        for(var i =0; i<this.objects.length; i++){
+            this.objects[i].id = i;
+        }
+        
+        //番号を変えたあのの描画確認
+        index =0;
+        for (const object of this.objects){
+            //console.log("object pos2", object.x, object.y)
+            cv.circle(dstm, new cv.Point(object.x+frame.width/2, -object.y+frame.height/2,),10, COLOR_LIST[index%9], -1);
+            index++;
+        }
+
+        this.preobjects.length = 0;
+        this.preobjects = this.objects.slice();
        
+        /*for (const object of this.objects){
+            console.log("final object", object.id, object.x, object.y)
+        }
+        for (const object of this.preobjects){
+            console.log("final preobects", object.id, object.x, object.y)
+        }*/
+        
+
         //結果画面表示
         if(this.globalAnalyzeImageShowFg==1){
             const imageData = new ImageData(new Uint8ClampedArray(dstm.data, dstm.cols, dstm.rows), frame.width, frame.height);
