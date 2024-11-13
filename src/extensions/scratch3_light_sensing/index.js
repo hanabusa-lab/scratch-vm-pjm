@@ -449,6 +449,10 @@ class Scratch3LightSensingBlocks {
             var object = null;
             //console.log("preobject len=", this.preobjects.length)
             for (var j =0; j<this.objects.length; j++){
+                //objectが既にtakeover対象になっていたら除外
+                if(this.objects[j].takeoverFg){
+                    continue;
+                }
                 //console.log("cur=", index, "pre=", i)
                 pobject = this.preobjects[i];
                 object = this.objects[j]
@@ -482,7 +486,7 @@ class Scratch3LightSensingBlocks {
         for(var i =0; i<this.objects.length; i++){
             this.objects[i].id = i;
         }
-        
+
         //番号を変えたあのの描画確認
         index =0;
         for (const object of this.objects){
